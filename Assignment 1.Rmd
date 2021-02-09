@@ -1,0 +1,466 @@
+---
+title: "APM466 Assignment 1"
+author: "Ruei-Hung Chen" 
+student number: 1004096006
+output: html_notebook
+---
+
+```{r}
+#loading require libraries
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(janitor)
+library(jrvFinance)
+```
+
+
+```{r}
+BI <- read.csv("Bond Info.csv")
+```
+
+Fundamental Questions: 
+
+#Question 1.
+
+a) Why do governments issue bonds and not simply print more money?
+
+- Printing money will dramatically increase the money supply in a country, and this will result in an undesirable inflation. On the other hand, when government issue bonds, they are able to maintain the amount of money in circulation. Thus, will not affect the value of currency.
+
+b)  Why does the long-term part of a yield curve flatten? 
+
+- A flatten yield curve may occur when investors worry about the growth prospect of a country's economy. As a result, they anticipate the interest rate to stay the same in the long-term. 
+
+c)  Explain what quantitative easing is and how the (US) Fed has employed this since the beginning of the COVID-19 pandemic.
+- Quantitative Easing is a monetary policy that central banks use to increase the money supply in an economy by purchasing long-term securities. Since the start of COVID-19, the Fed has purchased 1.45 trillion dollar worth of T-bill.
+
+
+#Question 2. 
+
+Bonds included in the construction of yield curve are: "CAN 1.75 May 21", "CAN 1.5 Aug 21", "CAN 0.5 Mar 22", "CAN 0.25 Aug 22", "CAN 1.75 Mar 23", "CAN 8 Jun 23", "CAN 2.25 Mar 24", "CAN 1.5 Sep 24", "CAN 1.25 Mar 25" , "CAN 0.5 Sep 25", "	CAN 0.25 Mar 26" and "CAN CAN 0.25 Mar 26". 
+
+
+- The bonds chosen in the list have maturity approximately 6 months apart with one another. This selection give us an evenly space maturity time and accurate "yield to maturity" to bootstrap for interpolation as we are plotting our yield curve. 
+- One exception is between now to 1 year from now. The bonds chosen within this period are 3 months from now, 6 months from now then 1 year from now. ("CAN 1.75 May 01", "CAN 1.5 Aug 01", "CAN 0.5 Mar 01"). The reason for this choice is because yields in short-term reflects market's expectation into the short-term future. It may be more volatile and indicates the demand for liquidity in the current market today.  
+```{r}
+bond_subset <- BI %>% 
+  dplyr::filter(name == "CAN 1.75 May 21" | name == 	"CAN 1.5 Aug 21" | name == "CAN 0.5 Mar 22"| name == "CAN 0.25 Aug 22" | name == "CAN 1.75 Mar 23"| name == "CAN 8 Jun 23"| name == "CAN 2.25 Mar 24"| name == "CAN 1.5 Sep 24" | name == "CAN 1.25 Mar 25" | name =="CAN 0.5 Sep 25"| name == "	CAN 0.25 Mar 26" | maturity.date == "2026-03-01") %>%
+  select(-c(yield.to.maturity)) %>%
+  janitor::clean_names() %>% 
+  arrange(maturity_date)
+  
+```
+
+#Question 3
+- According to Principle Component Analysis(PCA), the eigenvalues and eigenvectors associated with the covariance matrix of the stochastic processes give us the relative responsibility for the change in value of each process comparing with others.  For example, assume we are tracking the S and P 500 index, and notice that as market opens the index fell by 2 percent. By looking into each individual stock and find the covariance matrix of the index, we can rank the eigenvalues of each stock by magnitude. The stock with the largest eigenvalue is the one that is most responsible for the drop in index points than the other 499 stocks. It is a powerful technique to find the most significant variable out of a collection of all variables. It is also a good way to approximate the direction of movement of an index such as S and P 500.
+
+
+#Question 4
+
+##helper functions 
+```{r}
+# Calculate Dirty Price 
+dirty <- function(maturity, coupon_rate, price){
+  start <- as.Date("2021-02-01")
+  dirty_p <- bond.TCF(start, maturity, coupon_rate)$accrued + price
+  return(dirty_p)
+}
+
+#Helper Function that calculate all cashflows before the last payment 
+helper <- function(ttm, previous_rates, cf){
+  summation <- 0 
+  tracker <- length(cf)-1
+  i <- 1
+  while (tracker> 0){
+    tracker <- tracker - 1
+    summation <- summation + cf[i]*((1 + previous_rates[i]/2)^(-ttm[i]*2))
+    #summation <- summation + cf[i]*exp(-previous_rates[i]*ttm[i])
+    i <- i+1
+  }
+  return(summation)
+}
+
+# Calculate rates 
+rate_calc <- function(dirty, pv_past, cf, ttm){
+  step_1 <- (dirty - pv_past)/tail(cf, n = 1)
+  step_2 <- (1/step_1)^(1/(2*tail(ttm, n = 1)))
+  rate <- (step_2 -1)*2
+  # rate <- (((dirty - pv_past)/((tail(cf, n = 1))))^(-2*tail(ttm, n = 1)) -1)*2
+  # rate <- -tail(ttm, n = 1)*log(dirty - pv_past)
+  return(rate)
+}
+
+#ttm extraction 
+ttm_ex <- function(day){
+  start <- as.Date("2021-02-01")
+  vect <- c(0)
+  for (i in 1:nrow(day)){
+    time <- tail(bond.TCF(start, day$maturity_date[i], day$coupon[i])$t, n =1)
+    vect[i] <- time
+  }
+  return(vect)
+}
+```
+
+```{r}
+#time interpolation function
+interpolation <- function(day){
+  x <- ttm_ex(day)
+  y <- day$spot
+  interpolated_spot <- c(0)
+  for(i in 2:length(x)){
+    if ((x[i]/0.5 - x[i] %/% 0.5) != 0){
+      interval_n <- (x[i] %/% 0.5)*0.5
+      interpolated_spot[i] <- y[i-1]*(1 - (interval_n - x[i-1])/(x[i]- x[i-1]))+ y[i]*((interval_n - x[i-1])/(x[i]- x[i-1]))
+    } else {
+      interpolated_spot[i] <- 0 
+    }
+  }
+  return(interpolated_spot)
+}
+
+# Adjust time to multiples of 0.5
+t_adjust <- function(day){
+  inter <- interpolation(day)
+  time_period <- c(0.25, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5)
+  r <- c(day$spot[1])
+  for (i in 2:length(inter)){
+    if (inter[i] == 0){
+      r[i] <- day$spot[i]
+    } else if (inter[i]!= 0){
+      r[i] <- inter[i]
+    }
+  }
+  t_adjust <- cbind(time_period, r)
+  t_adjust <- as.data.frame(t_adjust)
+  return(t_adjust)
+}
+
+```
+
+
+## a) Calculating ytm for each bond
+```{r}
+#Change the class of date from character to date 
+bond_subset$date <- as.Date(bond_subset$date)
+bond_subset$maturity_date <- as.Date(bond_subset$maturity_date)
+
+#ytm for all bonds 
+ytm_added <-
+  bond_subset %>% 
+  group_by(date) %>% 
+  mutate(ytm = bond.yields(date, maturity_date, coupon, freq = 2,price =closing_price, convention = c("30/360", "ACT/ACT", "ACT/360", "30/360E"), comp.freq = Inf, redemption_value = 100)) %>% 
+  arrange(maturity_date)
+
+#time interpolation for ytm
+interpolation_ytm <- function(day){
+  x <- ttm_ex(day)
+  y <- day$ytm
+  interpolated_ytm <- c(0)
+  for(i in 2:length(x)){
+    if ((x[i]/0.5 - x[i] %/% 0.5) != 0){
+      interval_n <- (x[i] %/% 0.5)*0.5
+      interpolated_ytm[i] <- y[i-1]*(1 - (interval_n - x[i-1])/(x[i]- x[i-1]))+ y[i]*((interval_n - x[i-1])/(x[i]- x[i-1]))
+    } else {
+      interpolated_ytm[i] <- 0 
+    }
+  }
+  return(interpolated_ytm)
+}
+
+#t_adjust for ytm
+t_adjust_ytm <- function(day){
+  date <- day$date
+  inter <- interpolation_ytm(day)
+  time_period <- c(0.25, 0.5, 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5)
+  r <- c(day$ytm[1])
+  for (i in 2:length(inter)){
+    if (inter[i] == 0){
+      r[i] <- day$ytm[i]
+    } else if (inter[i]!= 0){
+      r[i] <- inter[i]
+    }
+  }
+  t_adjust <- cbind(time_period, r)
+  t_adjust <- as.data.frame(t_adjust)
+  a <- list(t_adjust = t_adjust, date = date)
+  return(a)
+}
+
+tidy_ytm <- function(day){
+  a <- cbind(day$t_adjust, day$date)
+  colnames(a) <- c("time_period", "ytm", "date")
+  return(a)
+}
+
+#Bootstrapping 
+ytm_1 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-18")))
+ytm_2 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-19")))
+ytm_3 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-20")))
+ytm_4 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-21")))
+ytm_5 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-22")))
+ytm_6 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-25")))
+ytm_7 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-26")))
+ytm_8 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-27")))
+ytm_9 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-28")))
+ytm_10 <- tidy_ytm(t_adjust_ytm(filter(ytm_added, date == "2021-01-29")))
+ytm_data <- rbind(ytm_1, ytm_2, ytm_3, ytm_4, ytm_5, ytm_6, ytm_7, ytm_8, ytm_9, ytm_10)
+
+#Data Visualization
+bond_subset %>% 
+  group_by(date) %>% 
+  mutate(ytm = bond.yields(date, maturity_date, coupon, freq = 2,price =closing_price, convention = c("30/360", "ACT/ACT", "ACT/360", "30/360E"), comp.freq = Inf, redemption_value = 100)) %>% 
+  ggplot(aes(x = maturity_date, y= ytm, group = date, colour = date)) + 
+  geom_point() + 
+  geom_line() + 
+  theme_minimal()
+
+#Data_visualization Time Adjusted
+ytm_data %>% 
+  group_by(date) %>% 
+  ggplot(aes(x = time_period, y= ytm, group = date, colour = date)) + 
+  labs(title = "Yield to Maturity Curve",x = "year(s)", y = "ytm") +
+  geom_point() + 
+  geom_line() + 
+  theme_minimal()
+
+```
+
+##b) Calculating spot rate 
+```{r}
+# Calculating spot for bonds 
+day_1 <- ytm_added %>% 
+  filter(date == "2021-01-18") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1]) 
+
+day_2 <- ytm_added %>% 
+  filter(date == "2021-01-19") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1])
+
+day_3 <- ytm_added %>% 
+  filter(date == "2021-01-20") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1]) 
+
+day_4 <- ytm_added %>% 
+  filter(date == "2021-01-21") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1])
+
+day_5 <- ytm_added %>% 
+  filter(date == "2021-01-22") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1]) 
+
+day_6 <- ytm_added %>% 
+  filter(date == "2021-01-25") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1])
+
+day_7 <- ytm_added %>% 
+  filter(date == "2021-01-26") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1]) 
+
+day_8 <- ytm_added %>% 
+  filter(date == "2021-01-27") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1])
+
+day_9 <- ytm_added %>% 
+  filter(date == "2021-01-28") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1]) 
+
+day_10 <- ytm_added %>% 
+  filter(date == "2021-01-29") %>% 
+  arrange(maturity_date)%>% 
+  mutate(spot = ytm[1])
+
+```
+
+```{r}
+
+# function to calculate spot rate for a day 
+please_work <- function(day){
+  vect <- c(day$spot[1])
+  for (i in 1:(nrow(day) - 1)){
+    spot_r <- day$spot[i +1]
+    start <- as.Date("2021-02-01")
+    dirty_p <- dirty(day$maturity_date[i+1], day$coupon[i+1], day$closing_price[i+1])
+    bond_info <- bond.TCF(start, day$maturity_date[i+1], day$coupon[i+1])
+    pv_past <- helper(bond_info$t, day$spot ,bond_info$cf)
+    spot_r <- rate_calc(dirty_p, pv_past, bond_info$cf, bond_info$t)
+    vect[i+1] <- spot_r
+  }
+  return(vect)
+}
+
+#spots for each day 
+day_1 <- day_1 %>% 
+  mutate(spot = please_work(day_1)) 
+spot_1 <- cbind(t_adjust(day_1), day_1$maturity_date, day_1$date)
+colnames(spot_1) <- c("t", "r", "maturity", "date")
+
+day_2 <- day_2 %>% 
+  mutate(spot = please_work(day_2))
+spot_2 <- cbind(t_adjust(day_2), day_2$maturity_date, day_2$date)
+colnames(spot_2) <- c("t", "r", "maturity", "date")
+
+day_3 <- day_3 %>% 
+  mutate(spot = please_work(day_3)) 
+spot_3 <- cbind(t_adjust(day_3), day_3$maturity_date, day_3$date)
+colnames(spot_3) <- c("t", "r", "maturity", "date")
+
+day_4 <- day_4 %>% 
+  mutate(spot = please_work(day_4)) 
+spot_4 <- cbind(t_adjust(day_4), day_4$maturity_date, day_4$date)
+colnames(spot_4) <- c("t", "r", "maturity", "date")
+
+day_5 <- day_5 %>% 
+  mutate(spot = please_work(day_5)) 
+spot_5 <- cbind(t_adjust(day_5), day_5$maturity_date, day_5$date)
+colnames(spot_5) <- c("t", "r", "maturity", "date")
+
+day_6 <- day_6 %>% 
+  mutate(spot = please_work(day_6)) 
+spot_6 <- cbind(t_adjust(day_6), day_6$maturity_date, day_6$date)
+colnames(spot_6) <- c("t", "r", "maturity", "date")
+
+day_7 <- day_7 %>% 
+  mutate(spot = please_work(day_7)) 
+spot_7 <- cbind(t_adjust(day_7), day_7$maturity_date, day_7$date)
+colnames(spot_7) <- c("t", "r", "maturity", "date")
+
+day_8 <- day_8 %>% 
+  mutate(spot = please_work(day_8)) 
+spot_8 <- cbind(t_adjust(day_8), day_8$maturity_date, day_8$date)
+colnames(spot_8) <- c("t", "r", "maturity", "date")
+
+day_9 <- day_9 %>% 
+  mutate(spot = please_work(day_9)) 
+spot_9 <- cbind(t_adjust(day_9), day_9$maturity_date, day_9$date)
+colnames(spot_9) <- c("t", "r", "maturity", "date")
+
+day_10 <- day_10 %>% 
+  mutate(spot = please_work(day_10)) 
+spot_10 <- cbind(t_adjust(day_10), day_10$maturity_date, day_10$date)
+colnames(spot_10) <- c("t", "r", "maturity", "date")
+
+spot_r_data <- as.data.frame(rbind(spot_1, spot_2, spot_3, spot_4, spot_5, spot_6, spot_7, spot_8, spot_9, spot_10))
+
+```
+
+```{r}
+#spot rate graph 
+spot_r_data %>% 
+  group_by(date) %>% 
+  ggplot(aes(x = t, y = r, group = date, colour = date), ) + 
+  labs(title= "Spot Rate", xlab = "year(s)", ylab = "spot_rate") +
+  geom_point() + 
+  geom_line() + 
+  theme_minimal()
+```
+
+
+# c) one year future rate
+```{r}
+one_yr_f <- function(day){
+  subset <- filter(day, t == 1 | t == 2 | t == 3 | t == 4 | t == 5) 
+  time <- subset$t 
+  rate <- subset$r
+  f_rate <- c(0)
+  iteration <- 1
+  for (i in 2: nrow(subset)){
+    y1 <- (1 + rate[1]/2)^(time[1]*2)
+    yn <- (1 + rate[i]/2)^(time[i]*2)
+    
+    # f_rate[iteration] <- (((1 + rate[i]/4)^(time[i]*2)/(1+ rate[i-2]/2)^(time[i-2])*2)^-0.5) - 1
+    f_rate[iteration] <- ((yn/y1)^(1/(2*iteration)) - 1)*2
+    iteration <- iteration + 1 
+  }
+  time <- c("f1_1", "f1_2", "f1_3", "f1_4")
+  subset <- subset[-1,]
+  date <- subset$date
+  maturity <- subset$maturity 
+  table = as.data.frame(cbind(time, f_rate))
+  a <- list(table = table, date = date, maturity = maturity)
+  return(a)
+}
+
+#forward rates 
+tidy_fr <- function(day){
+  a <- cbind(one_yr_f(day)$table, one_yr_f(day)$date, one_yr_f(day)$maturity)
+  return(a)
+}
+
+
+f1 <- tidy_fr(spot_1)
+f2 <- tidy_fr(spot_2)
+f3 <- tidy_fr(spot_3)
+f4 <- tidy_fr(spot_4)
+f5 <- tidy_fr(spot_5)
+f6 <- tidy_fr(spot_6)
+f7 <- tidy_fr(spot_7)
+f8 <- tidy_fr(spot_8)
+f9 <- tidy_fr(spot_9)
+f10 <- tidy_fr(spot_10)
+
+forward_r_data <- as.data.frame(rbind(f1, f2, f3, f4, f5, f6, f7, f8, f9, f10))
+forward_r_data$f_rate <- as.numeric(forward_r_data$f_rate)
+colnames(forward_r_data) <- c("time", "f_rate","date", "maturity")
+
+# forward rate chart
+forward_r_data %>% 
+  group_by(date) %>% 
+  ggplot(aes(x = time, y = f_rate, group = date, colour = date)) + 
+  labs(title = "One Year Forward Rate",xlab = "forward_year(s)", ylab = "f_rate") +
+  geom_point() + 
+  geom_line() + 
+  theme_minimal()
+
+```
+
+Question 5 
+```{r}
+#covariance matrix of yield 
+log_ytm1 <- log_return(filter(ytm_data, time_period == 1)$ytm)
+log_ytm2 <- log_return(filter(ytm_data, time_period == 2)$ytm)
+log_ytm3 <- log_return(filter(ytm_data, time_period == 3)$ytm)
+log_ytm4 <- log_return(filter(ytm_data, time_period == 4)$ytm)
+log_ytm5 <- log_return(filter(ytm_data, time_period == 5)$ytm)
+
+log_return <- function(return){
+  log_r <- c(0)
+  for (i in 1: (length(return) -1)){
+    log_r[i] <- log(return[i+1]/return[i])
+  }
+  return(log_r)
+}
+
+yield <- cbind(log_ytm1, log_ytm2, log_ytm3, log_ytm4, log_ytm5)
+cv_yield <- cov(yield)
+
+#cov matrix of forward rate
+log_f1 <- log_return(filter(forward_r_data, time == "f1_1")$f_rate)
+log_f2 <- log_return(filter(forward_r_data, time == "f1_2")$f_rate)
+log_f3 <- log_return(filter(forward_r_data, time == "f1_3")$f_rate)
+log_f4 <- log_return(filter(forward_r_data, time == "f1_4")$f_rate)
+log_f5 <- log_return(filter(forward_r_data, time == "f1_5")$f_rate)
+forward <- cbind(log_f1, log_f2, log_f3, log_f4)
+cv_f <- round(cov(forward), digits = 6)
+
+```
+
+Question 6 
+```{r}
+# eigenvalues and eigenvectors of yields
+EV_yield <- eigen(cv_yield)
+
+# eigenvalues and eigenvectors of forward rates 
+EV_forward <- eigen(cv_f)
+```
+
+
