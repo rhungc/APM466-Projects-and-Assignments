@@ -1,1 +1,1 @@
-# APM466-Fixed-Income-Securities-
+APM466 Projects and Assignments
