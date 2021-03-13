@@ -1,0 +1,235 @@
+---
+title: "Assignment2"
+output: html_notebook
+---
+
+# Tree 1, underlying of oil price
+```{r}
+
+iteration <- 1:53
+underlying <- numeric(length = length(iteration))
+track <- 1
+expo <- 52
+while (track <= 53){
+  underlying[track] <- (1.1)^expo
+  expo = expo - 2 
+  track = track + 1
+}
+underlying
+
+prev_value <- function(value, period){
+  nweek = 1:period
+  current_list = value 
+  newlist = c()
+  for (i in nweek){
+    # newlist[i] <- ifelse(current_list[i] >= 1, current_list[i]/1.1, current_list[i]*1.1)
+    newlist[i] <- current_list[i]/1.1
+    
+  }
+  return(newlist)
+}
+
+
+recomb_tree <- function(value, n_period){
+  output <- list(value)
+  newlist <- prev_value(value, n_period)
+  while(n_period >0) {
+    output = list.append(output, newlist)
+    n_period <- n_period -1 
+    newlist <- prev_value(newlist, n_period)
+  }
+  return(output)
+}
+
+underlying_tree <- recomb_tree(underlying, 52)
+
+# Find the intrinsic value of each node
+intrinsic_value <- function (tree){
+  output <- list()
+  for (i in 1:length(tree)){
+    newlist <- c()
+    for (j in 1:length(tree[[i]])){
+      newlist[j] <- ifelse(tree[[i]][j] -1 <0, 0, tree[[i]][j] -1) 
+    }
+    output = list.append(output, newlist)
+  }
+  return(output)
+}
+
+#intrinsic value of the underlying tree 
+iv_tree <- intrinsic_value(underlying_tree)
+```
+
+# Tree 2, value of American option 
+```{r}
+# first calculate the European payout price 
+payment <- numeric(length = length(iteration))
+for (i in seq_along(iteration)){
+  # After exercise option, how much is left over
+  payment[i] = ifelse(underlying[i] -1 < 0, 0, underlying[i] -1)
+}
+
+# backward construction of 1 up swing call 
+library(rlist)
+
+backward <- function (value, nperiod){
+  nweek <- 1:nperiod 
+  scenario <-  matrix(c(1.1, 0.1, 0.909, -0.0909), nrow = 2, byrow = T)
+  current_list <- value # store a list of option payout value
+  newlist <- c()
+  for (i in nweek){
+    answer_i <- solve(scenario) %*% c(value[i], value[i + 1])
+    newlist[i] <- answer_i[1]
+  }
+  newlist
+}
+
+tree_build <- function(t_value, nperiod){
+  output <- list(t_value)
+  newlist <- backward(t_value, nperiod)
+  nperiod <- nperiod - 1 
+  output <- list.append(output, newlist)
+  # output <- list(newlist)
+  while(nperiod > 0){
+    newlist <- backward(newlist, nperiod)
+    nperiod <- nperiod - 1
+    output = list.append(output, newlist)
+  }
+  return(output)
+}
+
+# 1 up swing tree: 
+upswing_1 <- tree_build(payment, 52)
+```
+
+
+
+# Tree 3, 2upswing
+```{r}
+tree_build2 <- function(t_value, nperiod){
+  output <- list(t_value)
+  newlist <- backward(t_value, nperiod)
+  nperiod <- nperiod - 1 
+  output <- list.append(output, newlist)
+  # output <- list(newlist)
+  while(nperiod > 0){
+    newlist <- backward(newlist, nperiod)
+    nperiod <- nperiod - 1
+    output = list.append(output, newlist)
+  }
+  return(output)
+}
+
+tree_build2(upswing_1[[1]], 52)
+```
+
+
+# 2up 
+```{r}
+m_tree <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- old_tree[1]
+  level = level - 1 
+  start <- old_tree[[2]] + intrinsic[[2]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+two_upswing <- m_tree(iv_tree, upswing_1)
+```
+
+# 3up
+```{r}
+m_tree3 <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- list(old_tree[[1]],old_tree[[2]])
+  level = level - 2 
+  start <- old_tree[[3]] + intrinsic[[3]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+three_up <- m_tree3(iv_tree, two_upswing)
+```
+
+
+# 4up 
+```{r}
+m_tree4 <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- list(old_tree[[1]],old_tree[[2]], old_tree[[3]])
+  level = level - 3
+  start <- old_tree[[4]] + intrinsic[[4]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+four_up <- m_tree4(iv_tree, three_up)
+```
+
+
+# Calculate Optimal Exercise Periods
+```{r}
+opt_exercise_call <- function(tree_n, tree_n1, payment){
+  
+  exercise_nodes <- list()
+  for (i in seq_along(tree_n)){
+    new_list <- numeric(length = length(tree_n[[i]]))
+    for (j in seq_along(tree_n[[i]])){
+      if (payment[[i]][j] + tree_n[[i]][j] > tree_n1[[i]][j] & tree_n1[[i]][j] != 0 ){
+        new_list[j] <- 1
+      } else if (payment[[i]][j] + tree_n[[i]][j] == tree_n1[[i]][j] & tree_n1[[i]][j] != 0){
+        new_list[j] <- 0.5
+      } else if ( payment[[i]][j] + tree_n[[i]][j] < tree_n1[[i]][j] & tree_n1[[i]][j] != 0 ) {
+        new_list[j] <- 0
+      }
+    }
+    exercise_nodes = list.append(exercise_nodes, new_list)
+  }
+  return(exercise_nodes)
+}
+```
+
+```{r}
+callnodes1 <- opt_exercise_call(upswing_1, two_upswing, iv_tree)
+callnodes2 <- opt_exercise_call(three_up, two_upswing, iv_tree)
+callnodes3 <- opt_exercise_call(three_up, four_up, iv_tree)
+```
+
+
+
+
+
+<!-- # multiple up swing trees: -->
+<!-- ```{r} -->
+
+<!-- multi_swing_tree <- function(intrinsic ,old_tree, level = 53){ -->
+<!--   payment2 <- old_tree[1] -->
+<!--   weeks <- 2: level -->
+<!--   for (i in weeks){ -->
+<!--     newlist <- c() -->
+<!--     for (j in 1:length(intrinsic[[i]])){ -->
+<!--       payment = intrinsic[[i]][j] -->
+<!--       new_node = payment + old_tree[[i]][j] -->
+<!--       newlist[j] <- new_node -->
+<!--     } -->
+<!--     payment2 = list.append(payment2, newlist) -->
+<!--   } -->
+<!--   return(payment2) -->
+<!-- } -->
+
+<!-- upswing_2 <- multi_swing_tree(iv_tree, upswing_1) -->
+<!-- upswing_3 <- multi_swing_tree(iv_tree, upswing_2) -->
+<!-- upswing_4 <- multi_swing_tree(iv_tree, upswing_3) -->
+<!-- ``` -->
+
+
