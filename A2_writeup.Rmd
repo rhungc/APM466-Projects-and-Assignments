@@ -1,0 +1,441 @@
+---
+title: "A2_Writeup"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+---
+
+# Call Option
+
+According to the simulation, the price of a four upswing option is \$1.0625/liter of gasoline. Mr. Hamilton would have to pay \$53.125 for this price protection plan for 52 weeks period. 
+
+As the graph below shows, the optimal exercising nodes are 
+```{r, echo = FALSE, message=FALSE, warning=FALSE}
+library(rlist)
+library(tidyverse)
+library(reshape2)
+library(ggplot2)
+## Tree 1, underlying of oil price
+iteration <- 1:53
+underlying <- numeric(length = length(iteration))
+track <- 1
+expo <- 52
+while (track <= 53){
+  underlying[track] <- (1.1)^expo
+  expo = expo - 2 
+  track = track + 1
+}
+
+
+prev_value <- function(value, period){
+  nweek = 1:period
+  current_list = value 
+  newlist = c()
+  for (i in nweek){
+    # newlist[i] <- ifelse(current_list[i] >= 1, current_list[i]/1.1, current_list[i]*1.1)
+    newlist[i] <- current_list[i]/1.1
+    
+  }
+  return(newlist)
+}
+
+
+recomb_tree <- function(value, n_period){
+  output <- list(value)
+  newlist <- prev_value(value, n_period)
+  while(n_period >0) {
+    output = list.append(output, newlist)
+    n_period <- n_period -1 
+    newlist <- prev_value(newlist, n_period)
+  }
+  return(output)
+}
+
+underlying_tree <- recomb_tree(underlying, 52)
+
+# Find the intrinsic value of each node
+intrinsic_value <- function (tree){
+  output <- list()
+  for (i in 1:length(tree)){
+    newlist <- c()
+    for (j in 1:length(tree[[i]])){
+      newlist[j] <- ifelse(tree[[i]][j] -1 <0, 0, tree[[i]][j] -1) 
+    }
+    output = list.append(output, newlist)
+  }
+  return(output)
+}
+
+#intrinsic value of the underlying tree 
+iv_tree <- intrinsic_value(underlying_tree)
+```
+
+
+```{r, echo = FALSE}
+# Tree 2, value of American option (1 upswing)
+## first calculate the European payout price 
+payment <- numeric(length = length(iteration))
+for (i in seq_along(iteration)){
+  # After exercise option, how much is left over
+  payment[i] = ifelse(underlying[i] -1 < 0, 0, underlying[i] -1)
+}
+
+## backward construction of 1 up swing call 
+library(rlist)
+
+backward <- function (value, nperiod){
+  nweek <- 1:nperiod 
+  scenario <-  matrix(c(1.1, 0.1, 0.909, -0.0909), nrow = 2, byrow = T)
+  current_list <- value # store a list of option payout value
+  newlist <- c()
+  for (i in nweek){
+    answer_i <- solve(scenario) %*% c(value[i], value[i + 1])
+    newlist[i] <- answer_i[1]
+  }
+  newlist
+}
+
+tree_build <- function(t_value, nperiod){
+  output <- list(t_value)
+  newlist <- backward(t_value, nperiod)
+  nperiod <- nperiod - 1 
+  output <- list.append(output, newlist)
+  # output <- list(newlist)
+  while(nperiod > 0){
+    newlist <- backward(newlist, nperiod)
+    nperiod <- nperiod - 1
+    output = list.append(output, newlist)
+  }
+  return(output)
+}
+
+## 1 up swing tree: 
+upswing_1 <- tree_build(payment, 52)
+
+```
+
+ 
+```{r, echo= FALSE}
+# 2- upswing
+m_tree <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- old_tree[1]
+  level = level - 1 
+  start <- old_tree[[2]] + intrinsic[[2]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+two_upswing <- m_tree(iv_tree, upswing_1)
+
+```
+
+
+```{r, echo= FALSE}
+# 3- upswing
+m_tree3 <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- list(old_tree[[1]],old_tree[[2]])
+  level = level - 2 
+  start <- old_tree[[3]] + intrinsic[[3]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+three_up <- m_tree3(iv_tree, two_upswing)
+
+```
+
+
+ 
+```{r, echo= FALSE}
+# 4- upswing
+m_tree4 <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- list(old_tree[[1]],old_tree[[2]], old_tree[[3]])
+  level = level - 3
+  start <- old_tree[[4]] + intrinsic[[4]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+four_up <- m_tree4(iv_tree, three_up)
+four_up[[53]]
+```
+
+
+```{r, echo= FALSE}
+# Calculate Optimal Exercise Periods
+opt_exercise_call <- function(tree_n, tree_n1, payment){
+  
+  exercise_nodes <- list()
+  for (i in seq_along(tree_n)){
+    new_list <- numeric(length = length(tree_n[[i]]))
+    for (j in seq_along(tree_n[[i]])){
+      if (payment[[i]][j] + tree_n[[i]][j] > tree_n1[[i]][j] & tree_n1[[i]][j] != 0 ){
+        new_list[j] <- "exercise"
+      } else if (payment[[i]][j] + tree_n[[i]][j] == tree_n1[[i]][j] & tree_n1[[i]][j] != 0){
+        new_list[j] <- "indifferent"
+      } else if ( payment[[i]][j] + tree_n[[i]][j] < tree_n1[[i]][j] & tree_n1[[i]][j] != 0 ) {
+        new_list[j] <- "not_optimal"
+      } else{
+        new_list[j] <- "not_optimal"
+      }
+    }
+    exercise_nodes = list.append(exercise_nodes, new_list)
+  }
+  return(exercise_nodes)
+}
+
+callnodes <- opt_exercise_call(three_up, four_up, iv_tree)
+```
+
+```{r, echo= FALSE}
+# plot 
+plot_machine <- function(nodes){
+  storage <- c(rep(0, 53))
+  for (i in seq_along(nodes)){
+    vec <- nodes[[i]]
+    if (length(vec) != 53){
+        vec[length(vec):53] = "not_optimal"
+    }
+    storage <- cbind(storage, vec)
+  }
+  return(as.matrix(storage[,-1]))
+}
+
+
+nodescall <- plot_machine(callnodes)
+colnames(nodescall) <- c(52:0)
+
+
+ggplot(melt(nodescall), aes(y = Var1,x = Var2, fill= value)) +
+  geom_tile() + 
+  scale_fill_brewer(palette =  "Blues", direction =  -1)+
+  labs(title = "Optimal Exercise Nodes in 4 up-swings", x = "time", y = "number of downs") + 
+  scale_x_continuous(breaks = seq(0,52, 4))
+
+```
+
+
+\newpage
+# Put Option
+
+For the 4 downswing option, according to our simulation, it cost about \$1.0635/liter for the price protection plan. Thus, the price protection program would cost Ms. Curie \$53,175 to have the right to sell her gasoline at $50,000 for the 52 weeks period. 
+
+```{r, echo = FALSE}
+## Tree 1, underlying of oil price
+iteration <- 1:53
+underlying <- numeric(length = length(iteration))
+track <- 1
+expo <- 52
+while (track <= 53){
+  underlying[track] <- (1.1)^expo
+  expo = expo - 2 
+  track = track + 1
+}
+
+
+prev_value <- function(value, period){
+  nweek = 1:period
+  current_list = value 
+  newlist = c()
+  for (i in nweek){
+    newlist[i] <- current_list[i]/1.1
+  }
+  return(newlist)
+}
+
+
+recomb_tree <- function(value, n_period){
+  output <- list(value)
+  newlist <- prev_value(value, n_period)
+  while(n_period >0) {
+    output = list.append(output, newlist)
+    n_period <- n_period -1 
+    newlist <- prev_value(newlist, n_period)
+  }
+  return(output)
+}
+
+underlying_tree <- recomb_tree(underlying, 52)
+
+# Find the intrinsic value of each node
+intrinsic_value_p <- function (tree){
+  output <- list()
+  for (i in 1:length(tree)){
+    newlist <- c()
+    for (j in 1:length(tree[[i]])){
+      newlist[j] <- ifelse(1 - tree[[i]][j]  <0, 0, 1 - tree[[i]][j]) 
+    }
+    output = list.append(output, newlist)
+  }
+  return(output)
+}
+
+#intrinsic value of the underlying tree 
+ivp_tree <- intrinsic_value_p(underlying_tree)
+```
+
+
+
+```{r, echo=FALSE}
+# Tree2 American Option
+
+backward_p <- function (value, nperiod){
+  nweek <- 2:nperiod 
+  scenario <-  matrix(c(1.1, 0.1, 0.909, -0.0909), nrow = 2, byrow = T)
+  current_list <- value # store a list of option payout value
+  newlist <- c()
+  for (i in nweek){
+    answer_i <- solve(scenario) %*% c(value[i], value[i + 1])
+    newlist[i] <- answer_i[1]
+  }
+  newlist
+}
+
+tree_build_p <- function(t_value, nperiod){
+  output <- list(t_value)
+  newlist <- backward(t_value, nperiod)
+  nperiod <- nperiod - 1 
+  output <- list.append(output, newlist)
+  # output <- list(newlist)
+  while(nperiod > 0){
+    newlist <- backward(newlist, nperiod)
+    nperiod <- nperiod - 1
+    output = list.append(output, newlist)
+  }
+  return(output)
+}
+
+downswing_1 <- tree_build_p(ivp_tree[[1]], 52)
+downswing_1[[53]]
+```
+
+
+```{r, echo=FALSE}
+# Tree3 2downswing 
+twodown_tree <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- old_tree[1]
+  level = level - 1 
+  start <- old_tree[[2]] + intrinsic[[2]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+two_downswing <- m_tree(ivp_tree, downswing_1)
+
+```
+
+
+
+
+```{r, echo = FALSE}
+# Tree4 3downswing
+threedown_tree <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- list(old_tree[1], old_tree[2])
+  level = level - 2 
+  start <- old_tree[[3]] + intrinsic[[3]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+three_down <- threedown_tree(ivp_tree, two_downswing)
+
+```
+
+
+```{r, echo= FALSE}
+# Tree5 4downswing
+fourdown_tree <- function(intrinsic ,old_tree, level = 53){
+  payment2 <- list(old_tree[[1]],old_tree[[2]], old_tree[[3]])
+  level = level - 3
+  start <- old_tree[[4]] + intrinsic[[4]]
+  level = level - 1 
+  new<- tree_build(start, level)
+  for (i in 1:length(new)){
+    payment2 <- list.append(payment2, new[[i]])
+  }
+  return(payment2)
+}
+
+four_down <- m_tree4(ivp_tree, three_down)
+four_down[[53]]
+```
+
+ 
+```{r, echo= FALSE}
+# Calculate put exercise period
+opt_exercise_put <- function(tree_n, tree_n1, payment){
+  
+  exercise_nodes <- list()
+  for (i in seq_along(tree_n)){
+    new_list <- numeric(length = length(tree_n[[i]]))
+    for (j in seq_along(tree_n[[i]])){
+      if (payment[[i]][j] + tree_n[[i]][j] > tree_n1[[i]][j] & tree_n1[[i]][j] != 0 ){
+        new_list[j] <- "exercise"
+      } else if (payment[[i]][j] + tree_n[[i]][j] == tree_n1[[i]][j] & tree_n1[[i]][j] != 0){
+        new_list[j] <- "indifferent"
+      } else if ( payment[[i]][j] + tree_n[[i]][j] < tree_n1[[i]][j] & tree_n1[[i]][j] != 0 ) {
+        new_list[j] <- "not optimal"
+      } else {
+        new_list[j] <- "not optimal"
+      }
+    }
+    exercise_nodes = list.append(exercise_nodes, new_list)
+  }
+  return(exercise_nodes)
+}
+
+putnodes <- opt_exercise_put(three_down, four_down, ivp_tree)
+```
+
+
+
+```{r, echo= FALSE}
+plot_machine_put <- function(nodes){
+  storage <- c(rep(0, 53))
+  for (i in seq_along(nodes)){
+    time <- nodes[[i]]
+    if (length(time) != 53){
+      b = rep("not optimal", (53 - length(time)))
+      time <- append(b, time)
+    }
+    storage <- cbind(storage, time)
+  }
+  return(as.matrix(storage[, -1]))
+}
+
+put_exercise <- plot_machine_put(putnodes)
+colnames(put_exercise) <- c(52:0) # columns are time
+ggplot(melt(put_exercise), aes(y = Var1,x = Var2, fill= value)) +
+  geom_tile() + 
+  scale_fill_brewer(palette = "Blues", direction =  -1) +
+  labs(title = "Optimal Exercise Nodes in 4 down-swings", x = "time", y = "number of downs") + scale_x_continuous(breaks = seq(0,52, 4))
+  
+
+```
+
+
+
+
+
