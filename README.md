@@ -8,3 +8,4 @@ In this repository, I have included all my assignments from the Mathematical Fin
 
 - In assignment 2, I constructed some data visualizations for options, determining their optimal exercise nodes during the holding period. 
 <img src = "https://raw.githubusercontent.com/rhungc/APM466-Projects-and-Assignments/main/Upswing.png" width = "200" height = "200">
+<img src = "https://raw.githubusercontent.com/rhungc/APM466-Projects-and-Assignments/main/DownSwing.png" width = "200" height = "200">
