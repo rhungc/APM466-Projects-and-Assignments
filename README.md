@@ -1,5 +1,5 @@
 # APM466 Projects and Assignments
-In this repository, I have included all my assignments from the Mathematical Finance Course (APM466) from University of Toronto. 
+In this repository, I have included some of my assignment products from the Mathematical Finance Course (APM466) from University of Toronto. 
 ## Final products from the assignments: 
 - In assignment 1, I constructed the ytm curve, spot rate curve, 1-year future yield curve for Canadian Government bonds using bootstrapping and interpolation techniques. 
 <img src = "https://raw.githubusercontent.com/rhungc/APM466-Projects-and-Assignments/main/ytm%20plot.png" width = "200" height = "200">
